@@ -102,28 +102,32 @@ public abstract class ThrottledDriver implements Driver {
 				dispatch(input.name, input.type, buffer, bufferLength);
 				break;
 			}
-			throttle();
 		} catch (IOException e) {
-			logger.error("Failure reading intput", e);
-			trySleep(5000);
+			// a bad read can happen, not an actionable event, so debug level
+			logger.debug("Failure reading input", e);
 		}
+		throttle();
 	}
 
 	private void processOutput(int outputIdx) {
-		try {
-			Output output = outputManager.getOutput(outputIdx);
-			if (output.state.compareAndSet(Output.NEEDS_FLUSH, Output.FLUSHING)) {
-				if (output.type == OutputType.LONG) {
-					doWrite(output.name, output.longValue.get());
-				} else if (output.type == OutputType.BUFFER) {
-					doWrite(output.name, output.bufferValue, output.bufferSize.get());
+		// try up to 3 times
+		for(int i = 0; i < 3; i++) {
+			try {
+				Output output = outputManager.getOutput(outputIdx);
+				if (output.state.compareAndSet(Output.NEEDS_FLUSH, Output.FLUSHING)) {
+					if (output.type == OutputType.LONG) {
+						doWrite(output.name, output.longValue.get());
+					} else if (output.type == OutputType.BUFFER) {
+						doWrite(output.name, output.bufferValue, output.bufferSize.get());
+					}
+					output.state.set(Output.FLUSHED);
+					throttle();
 				}
-				output.state.set(Output.FLUSHED);
-				throttle();
+				// success, break out of retry loop
+				break;
+			} catch (IOException e) {
+				logger.warn("Failure writing output", e);
 			}
-		} catch (IOException e) {
-			logger.error("Failure writing output", e);
-			trySleep(5000);
 		}
 	}
 

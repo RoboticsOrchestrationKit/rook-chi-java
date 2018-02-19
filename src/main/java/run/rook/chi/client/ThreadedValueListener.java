@@ -1,6 +1,5 @@
 package run.rook.chi.client;
 
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.agrona.DirectBuffer;
@@ -22,52 +21,41 @@ import run.rook.chi.data.DataType;
  * @author Eric Thill
  *
  */
-abstract class AtomicClient implements Client {
+public class ThreadedValueListener implements ValueListener {
 
 	public static final IdleStrategy DEFAULT_IDLE_STRATEGY = new BackoffIdleStrategy(10, 100, 1000, 1000000);
 	private static final AtomicLong UNIQUE_THREAD_NUMBER = new AtomicLong();
-
+	
 	private final Logger logger = LoggerFactory.getLogger(getClass());
 	private final ValueManager valueManager = new ValueManager();
 	private final ValueListener listener;
 	private final IdleStrategy idleStrategy;
+	private final String threadName;
 	private volatile boolean keepRunning;
 	private volatile boolean running;
 
-	public AtomicClient(ValueListener listener, IdleStrategy idleStrategy) {
+	public ThreadedValueListener(ValueListener listener) {
+		this(listener, DEFAULT_IDLE_STRATEGY, "CachingValueListener-" + UNIQUE_THREAD_NUMBER.incrementAndGet());
+	}
+	
+	public ThreadedValueListener(ValueListener listener, IdleStrategy idleStrategy, String threadName) {
 		this.listener = listener;
 		this.idleStrategy = idleStrategy;
+		this.threadName = threadName;
+		start();
 	}
 
-	@Override
-	public final void start() throws IOException {
+	private void start() {
 		keepRunning = true;
 		running = true;
-		new Thread(this::dispatchLoop, getClass().getSimpleName() + "_" + UNIQUE_THREAD_NUMBER.incrementAndGet())
-				.start();
-		onStart();
+		new Thread(this::dispatchLoop, threadName).start();
 	}
 
-	protected abstract void onStart() throws IOException;
-
-	@Override
-	public final void shutdown() throws IOException {
+	public final void shutdown() {
 		keepRunning = false;
 		while (running) {
 			idleStrategy.idle();
 		}
-		onShutdown();
-	}
-
-	protected abstract void onShutdown() throws IOException;
-
-	protected void handleValue(String name, DataType dataType, long value) {
-		valueManager.setValue(name, dataType, value);
-
-	}
-
-	protected void handleValue(String name, DataType dataType, DirectBuffer value, int length) {
-		valueManager.setValue(name, dataType, value, length);
 	}
 
 	private void dispatchLoop() {
@@ -119,6 +107,16 @@ abstract class AtomicClient implements Client {
 			}
 		}
 		running = false;
+	}
+
+	@Override
+	public void handle(String name, DataType dataType, long value) {
+		valueManager.setValue(name, dataType, value);
+	}
+
+	@Override
+	public void handle(String name, DataType dataType, DirectBuffer value, int length) {
+		valueManager.setValue(name, dataType, value, length);
 	}
 
 }

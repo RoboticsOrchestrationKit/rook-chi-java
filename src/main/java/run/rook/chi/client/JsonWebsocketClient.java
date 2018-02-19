@@ -3,6 +3,7 @@ package run.rook.chi.client;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Base64;
+import java.util.concurrent.ExecutionException;
 
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -22,7 +23,7 @@ import run.rook.chi.ValueListener;
 import run.rook.chi.data.DataType;
 import run.rook.chi.data.DataTypeUtil;
 
-public class JsonWebsocketClient extends AtomicClient {
+public class JsonWebsocketClient implements Client {
 
 	private final Logger logger = LoggerFactory.getLogger(getClass());
 	private final Gson gson = new Gson();
@@ -36,13 +37,12 @@ public class JsonWebsocketClient extends AtomicClient {
 	}
 	
 	public JsonWebsocketClient(String url, ValueListener listener) {
-		super(listener, DEFAULT_IDLE_STRATEGY);
 		this.url = url;
 		this.listener = listener;
 	}
 	
 	@Override
-	public void onStart() throws IOException {
+	public void start() throws IOException {
 		try {
 			client.start();
 			ClientUpgradeRequest request = new ClientUpgradeRequest();
@@ -56,7 +56,7 @@ public class JsonWebsocketClient extends AtomicClient {
 	}
 
 	@Override
-	public void onShutdown() throws IOException {
+	public void shutdown() throws IOException {
 		try {
 			client.stop();
 		} catch(IOException e) {
@@ -118,7 +118,13 @@ public class JsonWebsocketClient extends AtomicClient {
 		if(logger.isTraceEnabled()) {
 			logger.trace("Sending: " + json);
 		}
-		webSocket.getSession().getRemote().sendString(json);
+		try {
+			webSocket.getSession().getRemote().sendStringByFuture(json).get();
+		} catch (InterruptedException e) {
+			throw new IOException(e);
+		} catch (ExecutionException e) {
+			throw new IOException(e);
+		}
 	}
 
 	@SuppressWarnings("unused")
@@ -185,17 +191,17 @@ public class JsonWebsocketClient extends AtomicClient {
 	    }
 	    
 	    private void dispatchLong(ResponseMessage m) {
-	    	handleValue(m.name, m.dataType, Long.parseLong(m.value));
+	    	listener.handle(m.name, m.dataType, Long.parseLong(m.value));
 		}
 
 		private void dispatchBlob(ResponseMessage m) {
 			byte[] bytes = Base64.getDecoder().decode(m.value);
-			handleValue(m.name, m.dataType, new UnsafeBuffer(bytes), bytes.length);
+			listener.handle(m.name, m.dataType, new UnsafeBuffer(bytes), bytes.length);
 		}
 
 		private void dispatchUtf8(ResponseMessage m) {
 			byte[] bytes = m.value.getBytes(DataTypeUtil.UTF8);
-			handleValue(m.name, m.dataType, new UnsafeBuffer(bytes), bytes.length);
+			listener.handle(m.name, m.dataType, new UnsafeBuffer(bytes), bytes.length);
 		}
 
 		public Session getSession() {
